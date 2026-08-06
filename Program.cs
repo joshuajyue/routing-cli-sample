@@ -1,19 +1,52 @@
 using Microsoft.Extensions.AI;
+using OpenAI;
 using RoutingChat;
 using Spectre.Console;
 
-// Each simulated model reports when it is invoked so the sample can print a routing trace.
+// Set OPENAI_API_KEY to route to real models. Without it, the sample uses simulated ones so it
+// still runs, and so outages can be forced with /kill.
+string? apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+bool live = !string.IsNullOrWhiteSpace(apiKey);
+
+string chatModel = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL") ?? "gpt-4o-mini";
+string embeddingModel = Environment.GetEnvironmentVariable("OPENAI_EMBEDDING_MODEL") ?? "text-embedding-3-small";
+OpenAIClient? openAI = live ? new OpenAIClient(apiKey) : null;
+
+// Each route reports when it is invoked so the sample can print a routing trace.
 List<(string Name, bool Failed)> trace = [];
-void Record(SimulatedChatClient client) => trace.Add((client.Name, client.IsDown));
+void Record(RouteChatClient client) => trace.Add((client.Name, client.IsDown));
 
-SimulatedChatClient code = new("code", "I handle programming questions.", TimeSpan.FromMilliseconds(260), Record);
-SimulatedChatClient creative = new("creative", "I handle writing and ideation.", TimeSpan.FromMilliseconds(300), Record);
-SimulatedChatClient math = new("math", "I handle calculation and analysis.", TimeSpan.FromMilliseconds(220), Record);
-SimulatedChatClient general = new("general", "I am the catch-all backstop.", TimeSpan.FromMilliseconds(180), Record);
+RouteChatClient Route(string name, string persona, int latencyMs)
+{
+    IChatClient inner;
+    if (openAI is not null)
+    {
+        // The route's own options belong on the route's client, layered over the request options.
+        string model = Environment.GetEnvironmentVariable($"OPENAI_CHAT_MODEL_{name.ToUpperInvariant()}") ?? chatModel;
+        inner = openAI.GetChatClient(model)
+            .AsIChatClient()
+            .AsBuilder()
+            .ConfigureOptions(options => options.Instructions = persona)
+            .Build();
+    }
+    else
+    {
+        inner = new SimulatedChatClient(name, persona, TimeSpan.FromMilliseconds(latencyMs));
+    }
 
-SimulatedChatClient[] all = [code, creative, math, general];
+    return new RouteChatClient(name, inner, Record);
+}
 
-using var embeddings = new KeywordEmbeddingGenerator();
+using RouteChatClient code = Route("code", "You are a precise programming assistant. Answer with code where it helps.", 260);
+using RouteChatClient creative = Route("creative", "You are a vivid, imaginative writing assistant.", 300);
+using RouteChatClient math = Route("math", "You are a careful quantitative assistant. Show your reasoning.", 220);
+using RouteChatClient general = Route("general", "You are a helpful general-purpose assistant.", 180);
+
+RouteChatClient[] all = [code, creative, math, general];
+
+using IEmbeddingGenerator<string, Embedding<float>> embeddings = openAI is not null
+    ? openAI.GetEmbeddingClient(embeddingModel).AsIEmbeddingGenerator()
+    : new KeywordEmbeddingGenerator();
 
 // Route by what the message is about. Below the threshold, the default client wins.
 using var semantic = new SemanticRoutingChatClient(
@@ -43,7 +76,7 @@ using var semantic = new SemanticRoutingChatClient(
         ],
     },
     defaultClient: general,
-    scoreThreshold: 0.25f,
+    scoreThreshold: live ? 0.35f : 0.25f,
     leaveOpen: true);
 
 // If the specialist that semantic routing picked is down, fall back to the general model.
@@ -115,7 +148,9 @@ while (true)
 void WriteHeader()
 {
     AnsiConsole.Write(new Rule("[bold]routing-chat[/]").LeftJustified().RuleStyle("grey"));
-    AnsiConsole.MarkupLine("[grey]Microsoft.Extensions.AI routing, with simulated models.[/]");
+    AnsiConsole.MarkupLine(live
+        ? $"[grey]Microsoft.Extensions.AI routing, live on OpenAI ([white]{Markup.Escape(chatModel)}[/], [white]{Markup.Escape(embeddingModel)}[/]).[/]"
+        : "[grey]Microsoft.Extensions.AI routing, with simulated models. Set [white]OPENAI_API_KEY[/] to go live.[/]");
     AnsiConsole.WriteLine();
 
     var tree = new Tree("[bold]OrderedFailoverChatClient[/]").Style("grey");
@@ -180,7 +215,7 @@ bool HandleCommand(string input)
             table.AddColumn("model");
             table.AddColumn("state");
             table.AddColumn(new TableColumn("calls").RightAligned());
-            foreach (SimulatedChatClient client in all)
+            foreach (RouteChatClient client in all)
             {
                 table.AddRow(
                     $"[{ColorFor(client.Name)}]{client.Name}[/]",
@@ -198,7 +233,7 @@ bool HandleCommand(string input)
 
         case "/kill":
         case "/revive":
-            SimulatedChatClient? target = all.FirstOrDefault(c => c.Name == argument);
+            RouteChatClient? target = all.FirstOrDefault(c => c.Name == argument);
             if (target is null)
             {
                 AnsiConsole.MarkupLine($"[red]unknown model.[/] [grey]try: {string.Join(", ", all.Select(c => c.Name))}[/]");

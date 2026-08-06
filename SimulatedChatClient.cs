@@ -4,37 +4,24 @@ using Microsoft.Extensions.AI;
 namespace RoutingChat;
 
 /// <summary>
-/// A fake model that streams a canned reply, so the sample runs with no API key and lets you
-/// force outages on demand to watch failover happen.
+/// A fake model that streams a canned reply, so the sample runs with no API key.
 /// </summary>
 /// <remarks>
-/// Replace instances of this with real clients — <c>OpenAIClient.GetChatClient(...).AsIChatClient()</c>,
-/// for example — and the routing pipeline in <c>Program</c> is unchanged.
+/// Set <c>OPENAI_API_KEY</c> to replace these with real OpenAI clients. Nothing about the routing
+/// pipeline in <c>Program</c> changes either way.
 /// </remarks>
 internal sealed class SimulatedChatClient : IChatClient
 {
+    private readonly string _name;
     private readonly string _persona;
     private readonly TimeSpan _latency;
-    private readonly Action<SimulatedChatClient>? _onInvoked;
 
-    public SimulatedChatClient(
-        string name,
-        string persona,
-        TimeSpan latency,
-        Action<SimulatedChatClient>? onInvoked = null)
+    public SimulatedChatClient(string name, string persona, TimeSpan latency)
     {
-        Name = name;
+        _name = name;
         _persona = persona;
         _latency = latency;
-        _onInvoked = onInvoked;
     }
-
-    public string Name { get; }
-
-    /// <summary>Gets or sets a value indicating whether every call fails, simulating an outage.</summary>
-    public bool IsDown { get; set; }
-
-    public int Invocations { get; private set; }
 
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages,
@@ -56,16 +43,7 @@ internal sealed class SimulatedChatClient : IChatClient
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        Invocations++;
-        _onInvoked?.Invoke(this);
-
         await Task.Delay(_latency, cancellationToken).ConfigureAwait(false);
-
-        if (IsDown)
-        {
-            // Thrown before anything is yielded, which is what lets failover reselect.
-            throw new HttpRequestException($"{Name} is unavailable (503).");
-        }
 
         string prompt = messages.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty;
         foreach (string word in Reply(prompt).Split(' '))
@@ -86,7 +64,7 @@ internal sealed class SimulatedChatClient : IChatClient
     private string Reply(string prompt)
     {
         string trimmed = prompt.Length > 60 ? prompt[..57] + "..." : prompt;
-        return $"[{Name}] {_persona} You asked: \"{trimmed}\". "
+        return $"[{_name}] {_persona} You asked: \"{trimmed}\". "
             + "This is a simulated reply, so the interesting part is the routing trace above.";
     }
 }

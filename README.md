@@ -26,6 +26,44 @@ route: code x -> general ok
 dotnet run
 ```
 
+With no configuration the models are simulated, so it starts instantly and you can force outages.
+
+### Against real OpenAI models
+
+Set an API key and the same pipeline routes to real models:
+
+```bash
+# PowerShell
+$env:OPENAI_API_KEY = "sk-..."
+dotnet run
+
+# bash
+export OPENAI_API_KEY=sk-...
+dotnet run
+```
+
+| variable | default | |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | — | set it to go live; unset means simulated |
+| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | model for every route |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | model that decides where a message routes |
+| `OPENAI_CHAT_MODEL_CODE` | — | override just the code route |
+| `OPENAI_CHAT_MODEL_CREATIVE` | — | override just the creative route |
+| `OPENAI_CHAT_MODEL_MATH` | — | override just the math route |
+| `OPENAI_CHAT_MODEL_GENERAL` | — | override just the general route |
+
+Per-route overrides are where routing earns its keep — send hard problems to a stronger model and
+everything else to a cheap one:
+
+```bash
+export OPENAI_CHAT_MODEL=gpt-4o-mini
+export OPENAI_CHAT_MODEL_CODE=gpt-4o
+export OPENAI_CHAT_MODEL_MATH=gpt-4o
+```
+
+`/kill` still works in live mode: `RouteChatClient` wraps each route and fails before calling the
+real model, so you can demonstrate failover without an actual outage.
+
 Then try:
 
 | | |
@@ -61,30 +99,35 @@ best match above `scoreThreshold`. If that specialist then throws before produci
 | | |
 | --- | --- |
 | `Program.cs` | pipeline wiring and the Spectre.Console UI |
-| `SimulatedChatClient.cs` | a fake model that streams a canned reply and can be forced to fail |
+| `RouteChatClient.cs` | names a route, records invocations, and can be forced to fail |
+| `SimulatedChatClient.cs` | a fake model that streams a canned reply, used when no API key is set |
 | `KeywordEmbeddingGenerator.cs` | an offline `IEmbeddingGenerator` so semantic routing works without a network call |
 
-## Using real models
+## How the two modes differ
 
-Swap the `SimulatedChatClient` instances in `Program.cs` for real ones — nothing else changes:
-
-```csharp
-IChatClient code = new OpenAIClient(apiKey)
-    .GetChatClient("gpt-4o-mini")
-    .AsIChatClient();
-```
-
-Do the same for the embedding generator, which is the part that decides where a message routes:
+Only the construction of the inner clients changes. Everything downstream — the semantic router,
+the failover client, the trace, `/kill` — is identical:
 
 ```csharp
-IEmbeddingGenerator<string, Embedding<float>> embeddings = new OpenAIClient(apiKey)
-    .GetEmbeddingClient("text-embedding-3-small")
-    .AsIEmbeddingGenerator();
+IChatClient inner = openAI is not null
+    ? openAI.GetChatClient(model)
+        .AsIChatClient()
+        .AsBuilder()
+        .ConfigureOptions(options => options.Instructions = persona)
+        .Build()
+    : new SimulatedChatClient(name, persona, latency);
+
+return new RouteChatClient(name, inner, Record);
 ```
 
-`KeywordEmbeddingGenerator` hashes words into a vector and normalizes, so cosine similarity
-tracks vocabulary overlap. That is enough to route convincingly offline, but a real embedding
-model will match on meaning rather than on shared words.
+The `ConfigureOptions` call is worth noting: the route's own options belong on the route's client,
+layered over whatever options the request carried. Routing chooses *which* client to invoke, and
+the client supplies its own configuration.
+
+`KeywordEmbeddingGenerator` hashes words into a vector and normalizes, so cosine similarity tracks
+vocabulary overlap. That is enough to route convincingly offline, but a real embedding model
+matches on meaning rather than on shared words — which is why the score threshold is slightly
+higher in live mode.
 
 ## Package version
 
@@ -97,6 +140,7 @@ git clone https://github.com/dotnet/extensions
 cd extensions
 dotnet pack src/Libraries/Microsoft.Extensions.AI.Abstractions/Microsoft.Extensions.AI.Abstractions.csproj -c Release -o <sample>/local-packages
 dotnet pack src/Libraries/Microsoft.Extensions.AI/Microsoft.Extensions.AI.csproj -c Release -o <sample>/local-packages
+dotnet pack src/Libraries/Microsoft.Extensions.AI.OpenAI/Microsoft.Extensions.AI.OpenAI.csproj -c Release -o <sample>/local-packages
 ```
 
 Once 10.9.0 is published, set `MeaiVersion` in `RoutingChat.csproj` to `10.9.0` and delete the
@@ -104,3 +148,4 @@ Once 10.9.0 is published, set `MeaiVersion` in `RoutingChat.csproj` to `10.9.0` 
 
 These types are `[Experimental]` under diagnostic ID `MEAI001`, which `RoutingChat.csproj`
 suppresses with `<NoWarn>`.
+

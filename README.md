@@ -45,21 +45,45 @@ dotnet run
 | variable | default | |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | — | set it to go live; unset means simulated |
-| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | model for every route |
+| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | model for any route without an override |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | model that decides where a message routes |
-| `OPENAI_CHAT_MODEL_CODE` | — | override just the code route |
-| `OPENAI_CHAT_MODEL_CREATIVE` | — | override just the creative route |
-| `OPENAI_CHAT_MODEL_MATH` | — | override just the math route |
-| `OPENAI_CHAT_MODEL_GENERAL` | — | override just the general route |
+| `OPENAI_CHAT_MODEL_<ROUTE>` | — | model for one route |
+| `OPENAI_REASONING_<ROUTE>` | — | `none`, `low`, `medium`, or `high` |
+| `OPENAI_TEMPERATURE_<ROUTE>` | — | e.g. `0.8` |
 
-Per-route overrides are where routing earns its keep — send hard problems to a stronger model and
+`<ROUTE>` is `CODE`, `CREATIVE`, `MATH`, or `GENERAL`. Whatever you set shows up in the tree the
+app prints at startup, so you can confirm it took effect.
+
+Per-route settings are where routing earns its keep — send hard problems to a stronger model and
 everything else to a cheap one:
 
 ```bash
-export OPENAI_CHAT_MODEL=gpt-4o-mini
-export OPENAI_CHAT_MODEL_CODE=gpt-4o
-export OPENAI_CHAT_MODEL_MATH=gpt-4o
+export OPENAI_CHAT_MODEL=gpt-5.4            # default for every route
+export OPENAI_CHAT_MODEL_CODE=gpt-5.5       # code gets the stronger model...
+export OPENAI_REASONING_CODE=high           # ...thinking hard
+export OPENAI_CHAT_MODEL_MATH=gpt-5.5       # math too...
+export OPENAI_REASONING_MATH=medium         # ...but less of it
+export OPENAI_TEMPERATURE_CREATIVE=0.8      # creative gets more variety
 ```
+
+`run-gpt5.ps1` and `run-gpt5.sh` in this repo apply exactly that mix:
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
+. .\run-gpt5.ps1
+dotnet run
+```
+
+```bash
+export OPENAI_API_KEY=sk-...
+source ./run-gpt5.sh
+dotnet run
+```
+
+Dot-source or `source` them so the variables survive into `dotnet run`.
+
+These per-route settings are applied with `ConfigureOptions` on the route's own client, not by the
+router — routing decides *which* client to invoke, and the client carries its own configuration.
 
 `/kill` still works in live mode: `RouteChatClient` wraps each route and fails before calling the
 real model, so you can demonstrate failover without an actual outage.

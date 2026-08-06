@@ -16,18 +16,41 @@ OpenAIClient? openAI = live ? new OpenAIClient(apiKey) : null;
 List<(string Name, bool Failed)> trace = [];
 void Record(RouteChatClient client) => trace.Add((client.Name, client.IsDown));
 
+// Populated in live mode so the header can show what each route resolved to.
+List<(string Name, string Model, ReasoningEffort? Effort, float? Temperature)> routeSummaries = [];
+
 RouteChatClient Route(string name, string persona, int latencyMs)
 {
+    string suffix = name.ToUpperInvariant();
     IChatClient inner;
+
     if (openAI is not null)
     {
         // The route's own options belong on the route's client, layered over the request options.
-        string model = Environment.GetEnvironmentVariable($"OPENAI_CHAT_MODEL_{name.ToUpperInvariant()}") ?? chatModel;
+        string model = Environment.GetEnvironmentVariable($"OPENAI_CHAT_MODEL_{suffix}") ?? chatModel;
+        ReasoningEffort? effort = ParseEffort(Environment.GetEnvironmentVariable($"OPENAI_REASONING_{suffix}"));
+        float? temperature = ParseTemperature(Environment.GetEnvironmentVariable($"OPENAI_TEMPERATURE_{suffix}"));
+
         inner = openAI.GetChatClient(model)
             .AsIChatClient()
             .AsBuilder()
-            .ConfigureOptions(options => options.Instructions = persona)
+            .ConfigureOptions(options =>
+            {
+                options.Instructions = persona;
+
+                if (effort is not null)
+                {
+                    options.Reasoning = new ReasoningOptions { Effort = effort };
+                }
+
+                if (temperature is not null)
+                {
+                    options.Temperature = temperature;
+                }
+            })
             .Build();
+
+        routeSummaries.Add((name, model, effort, temperature));
     }
     else
     {
@@ -36,6 +59,20 @@ RouteChatClient Route(string name, string persona, int latencyMs)
 
     return new RouteChatClient(name, inner, Record);
 }
+
+static ReasoningEffort? ParseEffort(string? value) => value?.Trim().ToLowerInvariant() switch
+{
+    "none" => ReasoningEffort.None,
+    "low" => ReasoningEffort.Low,
+    "medium" or "med" => ReasoningEffort.Medium,
+    "high" => ReasoningEffort.High,
+    _ => null,
+};
+
+static float? ParseTemperature(string? value) =>
+    float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float parsed)
+        ? parsed
+        : null;
 
 using RouteChatClient code = Route("code", "You are a precise programming assistant. Answer with code where it helps.", 260);
 using RouteChatClient creative = Route("creative", "You are a vivid, imaginative writing assistant.", 300);
@@ -155,10 +192,10 @@ void WriteHeader()
 
     var tree = new Tree("[bold]OrderedFailoverChatClient[/]").Style("grey");
     TreeNode semanticNode = tree.AddNode("[bold]SemanticRoutingChatClient[/] [grey]routes by content[/]");
-    semanticNode.AddNode("[cyan]code[/] [grey]programming[/]");
-    semanticNode.AddNode("[magenta]creative[/] [grey]writing[/]");
-    semanticNode.AddNode("[yellow]math[/] [grey]calculation[/]");
-    semanticNode.AddNode("[green]general[/] [grey]default below threshold[/]");
+    semanticNode.AddNode($"[cyan]code[/] [grey]programming{Describe("code")}[/]");
+    semanticNode.AddNode($"[magenta]creative[/] [grey]writing{Describe("creative")}[/]");
+    semanticNode.AddNode($"[yellow]math[/] [grey]calculation{Describe("math")}[/]");
+    semanticNode.AddNode($"[green]general[/] [grey]default below threshold{Describe("general")}[/]");
     tree.AddNode("[green]general[/] [grey]backstop if the specialist fails[/]");
     AnsiConsole.Write(tree);
 
@@ -166,6 +203,30 @@ void WriteHeader()
     AnsiConsole.MarkupLine("[grey]Try \"why does my code throw a null reference\", then [white]/kill code[/] and ask again.[/]");
     AnsiConsole.MarkupLine("[grey]Commands: [white]/kill[/] [white]/revive[/] [white]/status[/] [white]/reset[/] [white]/help[/] [white]/quit[/][/]");
     AnsiConsole.WriteLine();
+}
+
+string Describe(string route)
+{
+    (string Name, string Model, ReasoningEffort? Effort, float? Temperature) summary =
+        routeSummaries.FirstOrDefault(s => s.Name == route);
+
+    if (summary.Model is null)
+    {
+        return string.Empty;
+    }
+
+    List<string> parts = [Markup.Escape(summary.Model)];
+    if (summary.Effort is not null)
+    {
+        parts.Add($"reasoning {summary.Effort.ToString()!.ToLowerInvariant()}");
+    }
+
+    if (summary.Temperature is not null)
+    {
+        parts.Add($"temp {summary.Temperature.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+    }
+
+    return $" [white]{string.Join(", ", parts)}[/]";
 }
 
 void WriteTrace()

@@ -155,20 +155,8 @@ higher in live mode.
 
 ## Package version
 
-The routing types ship in `Microsoft.Extensions.AI` **10.9.0**. Until that is on NuGet.org, this
-sample restores them from `./local-packages`, built from a clone of
-[dotnet/extensions](https://github.com/dotnet/extensions):
-
-```bash
-git clone https://github.com/dotnet/extensions
-cd extensions
-dotnet pack src/Libraries/Microsoft.Extensions.AI.Abstractions/Microsoft.Extensions.AI.Abstractions.csproj -c Release -o <sample>/local-packages
-dotnet pack src/Libraries/Microsoft.Extensions.AI/Microsoft.Extensions.AI.csproj -c Release -o <sample>/local-packages
-dotnet pack src/Libraries/Microsoft.Extensions.AI.OpenAI/Microsoft.Extensions.AI.OpenAI.csproj -c Release -o <sample>/local-packages
-```
-
-Once 10.9.0 is published, set `MeaiVersion` in `RoutingChat.csproj` to `10.9.0` and delete the
-`local` source from `NuGet.config`.
+The routing types ship in `Microsoft.Extensions.AI` **10.9.0**, so `dotnet run` restores them from
+NuGet.org like any other package.
 
 These types are `[Experimental]` under diagnostic ID `MEAI001`, which `RoutingChat.csproj`
 suppresses with `<NoWarn>`.

@@ -1,6 +1,5 @@
 bin/
 obj/
-local-packages/
 *.user
 .vs/
 .idea/

@@ -127,32 +127,6 @@ best match above `scoreThreshold`. If that specialist then throws before produci
 | `SimulatedChatClient.cs` | a fake model that streams a canned reply, used when no API key is set |
 | `KeywordEmbeddingGenerator.cs` | an offline `IEmbeddingGenerator` so semantic routing works without a network call |
 
-## How the two modes differ
-
-Only the construction of the inner clients changes. Everything downstream — the semantic router,
-the failover client, the trace, `/kill` — is identical:
-
-```csharp
-IChatClient inner = openAI is not null
-    ? openAI.GetChatClient(model)
-        .AsIChatClient()
-        .AsBuilder()
-        .ConfigureOptions(options => options.Instructions = persona)
-        .Build()
-    : new SimulatedChatClient(name, persona, latency);
-
-return new RouteChatClient(name, inner, Record);
-```
-
-The `ConfigureOptions` call is worth noting: the route's own options belong on the route's client,
-layered over whatever options the request carried. Routing chooses *which* client to invoke, and
-the client supplies its own configuration.
-
-`KeywordEmbeddingGenerator` hashes words into a vector and normalizes, so cosine similarity tracks
-vocabulary overlap. That is enough to route convincingly offline, but a real embedding model
-matches on meaning rather than on shared words — which is why the score threshold is slightly
-higher in live mode.
-
 ## Package version
 
 The routing types ship in `Microsoft.Extensions.AI` **10.9.0**, so `dotnet run` restores them from

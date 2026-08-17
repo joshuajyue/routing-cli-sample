@@ -7,6 +7,10 @@ A small terminal chat app that shows content-based routing and failover in
 The models are simulated, so it runs with no API key — and you can take one down mid-conversation
 to watch failover pick up.
 
+This sample applies the routing APIs developed in
+[`dotnet/extensions#7662`](https://github.com/dotnet/extensions/pull/7662) and refined in
+[`dotnet/extensions#7685`](https://github.com/dotnet/extensions/pull/7685).
+
 ```
 you> why does my code throw a null reference exception
 route: code ok
@@ -134,4 +138,3 @@ NuGet.org like any other package.
 
 These types are `[Experimental]` under diagnostic ID `MEAI001`, which `RoutingChat.csproj`
 suppresses with `<NoWarn>`.
-
